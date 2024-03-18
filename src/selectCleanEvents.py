@@ -5,15 +5,35 @@ import os
 # Main class to perform baseline selection on events (output is a .csv file)
 class selectCleanEvents:
     def __init__(self, data_file_name, out_directory='../analysis_files/', pedestal_file_name='../calibrations/pedestals.csv', mip_file_name='../calibrations/mip.csv', do_one_bar=False):
-        self.in_data = pd.read_csv(data_file_name)
+        '''
+        Initalization
+        @param data_file_name: str or list of str pointing to input analysis csv files
+        @param out_directory: output directory for cleaned analysis csv files
+        @param pedestal_file_name: location of pedestal calibration csv
+        @param mip_file_name: location of MIP calibration csv
+        @param do_one_bar: debug flag, performs chain on only one bar
+        '''
+
+        # Checks to see if the type of object passed as data_file_name is compatible with a request for alignment
+        if(type(data_file_name) is not str and type(data_file_name) is not list):
+            raise ValueError('Input file format should be a string of a single file name, or a list of strings of multiple file names!')
+        self.data_file_name = None
+        if(type(data_file_name)==str):
+            self.data_file_name = [data_file_name]
+        if(type(data_file_name)==list):
+            self.data_file_name = data_file_name
+        frames = []
+        for i in range(len(self.data_file_name)):
+            frames.append(pd.read_csv(self.data_file_name[i]))
+        try:
+            self.run_number = data_file_name[0].split('/')[-1].split('.')[0].split('_')[1]
+        except:
+            self.run_number = data_file_name[0].split('.')[0].split('_')[1]
+        self.in_data = pd.concat(frames)
         self.out_directory = out_directory
         self.in_peds = pd.read_csv(pedestal_file_name)
         self.in_mips = pd.read_csv(mip_file_name)
         self.do_one_bar = do_one_bar
-        try:
-            self.run_number = data_file_name.split('/')[-1].split('.')[0].split('_')[1]
-        except:
-            self.run_number = data_file_name.split('.')[0].split('_')[1]
 
     # Clean DataFrame for easy handling
     def __clean_dataframes(self, result_df):
@@ -78,11 +98,10 @@ class selectCleanEvents:
     # Deposited into the first layer is consistent with a MIP. Also aggregates ADC and TOA information into one column.
     def clean_events(self):
 
-        in_data_ = self.in_data.copy()
-
         # If we only want to look at one bar, define this here
+
         if self.do_one_bar is True:
-            in_data_ = in_data_[(in_data_['layer']==1) & (in_data_['strip']==3)]
+            in_data = in_data[(in_data['layer']==1) & (in_data['strip']==3)]
 
         # Process each layer and bar independently
         grouped_data = self.in_data.groupby(['layer', 'strip'], group_keys=False)

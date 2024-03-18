@@ -24,7 +24,7 @@ It is assumed that a large portion of this framework will ultimately be implemen
  
 ## Workflow
 1. Reformat decoded ROOT files
-    Transform input ROOT files into csv files for ease of use. This involves removing unneeded information and aggregating individual time-sample data into per-event information. The goal is to reduce the file size and reformat.
+    Transform input ROOT files into csv files for ease of use. This involves removing unneeded information and aggregating individual time-sample data into per-event information. The goal is to reduce the file size and reformat. This step also will perform alignment of two FPGAs, corresponding to the front and back of the HCAL prototype.
     - Source file: makeAnalysisFiles.py
     - Notebook: reformat_root_files.ipynb
   
@@ -44,9 +44,8 @@ It is assumed that a large portion of this framework will ultimately be implemen
     - Notebook: clean_and_analyze.ipynb
   
 ## To-do
-1. Implement code that performs alignment on the two halves of the HCAL prototype. **As of now, the code assumes this has not been done!**
-2. Include code that calibrates TOA (local on Joe's machine).
-3. For pulse-fitting, include functionality to retain time-sample ADC information
-4. Add functionality for calibrated TOT (when studied and complete).
+1. Include code that calibrates TOA (local on Joe's machine).
+2. For pulse-fitting, include functionality to retain time-sample ADC information
+3. Add functionality for calibrated TOT (when studied and complete).
   
 ##### Contact Joe at jmuse@umn.edu (or at joe.m.muse@gmail.com) with any questions or concerns.

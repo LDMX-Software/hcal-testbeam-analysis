@@ -20,16 +20,38 @@ hep.style.use(hep.style.ATLAS)
 class calculateMIPs:
     def __init__(self, data_file_name, pedestal_file_name='../calibrations/pedestals.csv', mip_fit_cut_file_name=None, out_directory='../calibrations/', plot_mips=True, 
                 plots_directory='../plots/mips', do_one_bar=False, calc_multipliers=False):
-        try:
-            self.run_number = data_file_name.split('/')[-1].split('.')[0].split('_')[1]
-        except:
-            self.run_number = data_file_name.split('.')[0].split('_')[1]
-        if(self.run_number != '287'):
-            raise ValueError('Expecting run 287 for 4 GeV defocused muons!!')
+            '''
+        Initalization
+        @param data_file_name: str or list of str pointing to input analysis csv files
+        @param pedestal_file_name: input pedestal csv calibratoon file
+        @param mip_fit_cut_file_name: if using a csv containing how many standard deviations above pedestal to cut for each channel
+        @param out_directory: output directory for MIP calibration csv files
+        @param plot_mips: flag indiciating whether to plot the MIP fit results- if True, then plot
+        @param plots_directory: where to put MIP fit plots
+        @param do_one_bar: debug flag, performs chain on only one bar
+        @param calc_multipliers: multipliers to try for by-hand cuts of pedestal
+        '''
+
         self.out_directory = out_directory
         self.do_one_bar = do_one_bar
         self.plot_mips = plot_mips
-        self.in_data = pd.read_csv(data_file_name)
+        self.data_file_name = None
+        if(type(data_file_name) is not str and type(data_file_name) is not list):
+            raise ValueError('Input file format should be a string of a single file name, or a list of strings of multiple file names!')
+        if(type(data_file_name)==str):
+            self.data_file_name = [data_file_name]
+        if(type(data_file_name)==list):
+            self.data_file_name = data_file_name
+        frames = []
+        for i in range(len(self.data_file_name)):
+            frames.append(pd.read_csv(self.data_file_name[i]))
+        try:
+            self.run_number = data_file_name[0].split('/')[-1].split('.')[0].split('_')[1]
+        except:
+            self.run_number = data_file_name[0].split('.')[0].split('_')[1]
+        if(self.run_number != '287'):
+            raise ValueError('Expecting run 287 for 4 GeV defocused muons!!')
+        self.in_data = pd.concat(frames)
         self.in_peds = pd.read_csv(pedestal_file_name)
         self.calc_multipliers = calc_multipliers
 
@@ -183,7 +205,10 @@ class calculateMIPs:
         # Make plots if requested
         if self.plot_mips is True and coeff is not None:
             fig,ax = plt.subplots(figsize=(8, 8))
-            ax.plot(new_x, pylandau.langau(new_x, *coeff), "-")
+            try:
+                ax.plot(new_x, pylandau.langau(new_x, *coeff), "-")
+            except:
+                print('Cannot plot bad fit')
             ax.errorbar(x,y,yerr=np.sqrt(y),drawstyle='steps-mid')
             ax.set_yscale('log')
             ax.set_xlabel('Sum ADC '+str(end))

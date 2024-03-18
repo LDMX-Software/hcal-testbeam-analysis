@@ -15,18 +15,40 @@ hep.style.use(hep.style.ATLAS)
 # Main class to calculate and save pedestals
 class calculatePedestals:
     def __init__(self, root_file_name, out_directory='../calibrations/', plot_pedestals=True, plots_directory='../plots/pedestals', do_one_bar=False):
+        '''
+        Initalization
+        @param root_file_name: str or list of str pointing to input ROOT files
+        @param out_directory: output directory for pedestal calibration csv files
+        @param plot_pedestals: flag for plotting pedestal results- if True, then plot
+        @param plots_directory: output directory for pedestal plots
+        @param do_one_bar: debug flag, performs chain on only one bar
+        '''
+
+        # Checks to see if the type of object passed as root_file_name is compatible with a request for alignment
+        if(type(root_file_name) is not str and type(root_file_name) is not list):
+            raise ValueError('Input file format should be a string of a single file name, or a list of strings of multiple file names!')
+
+        # Set variables
+        if(type(root_file_name)=='str'):
+            self.root_file_name = [root_file_name]
+        else:
+            self.root_file_name = root_file_name
         try:
-            self.run_number = root_file_name.split('/')[-1].split('_')[5]
+            self.run_number = root_file_name[0].split('/')[-1].split('_')[5]
         except:
-            self.run_number = root_file_name.split('_')[5]
+            self.run_number = root_file_name[0].split('_')[5]
         if(self.run_number != '287'):
             raise ValueError('Expecting run 287 for 4 GeV defocused muons!!')
-        self.root_file_name = root_file_name + ':ntuplizehgcroc/hgcroc'
+        self.fpgas = []
+        for i in range(len(self.root_file_name)):
+            self.root_file_name[i] = self.root_file_name[i] + ':ntuplizehgcroc/hgcroc'
+            try:
+                self.fpgas.append(self.root_file_name[i].split('/')[-1].split('_')[3])
+            except:
+                self.fpgas.append(self.root_file_name[i].split('_')[3])
         self.out_directory = out_directory
         self.do_one_bar = do_one_bar
         self.plot_pedestals = plot_pedestals
-        with uproot.open(self.root_file_name) as in_file:
-            self.in_data = in_file.arrays(["layer","end","strip","adc","tot","toa","pf_event"], library="pd")
         self.out_ped_individ = {}
         self.out_ped_sum = {'layer': [],
                 'strip': [],
@@ -105,7 +127,9 @@ class calculatePedestals:
 
     def __plot_pedestal(self, dataframe, layer, bar, end, mean, std_dev):
         # Define figure for end and plot
-        fig,ax = plt.subplots(figsize=(8, 8))
+        fig = plt.figure(num=1, clear=True)
+        ax = fig.add_subplot()
+        #fig,ax = plt.subplots(figsize=(8, 8))
         
         ax.hist(dataframe,bins=100,density=True,histtype='step',range=[-200,400])
             
@@ -124,7 +148,8 @@ class calculatePedestals:
         ax.set_title('Layer: '+str(layer)+' Bar: '+str(bar)+' Side: 0 '+str(round(mean,2))+' '+str(round(std_dev,2)))
         
         plt.savefig(self.plots_directory+'/pedestal_ped_subtracted_side_'+str(end)+'_layer_'+str(layer)+'_bar_'+str(bar)+'.pdf')
-        plt.close()
+        fig.clear()
+        plt.close(fig)
 
     # Calculate sum of ADC pedestals (to be subtracted off the case of all 8 time samples added)
     def __get_sum_pedestals(self, group):
@@ -192,30 +217,40 @@ class calculatePedestals:
     # Main function to calculate pedestals. Creates a csv that has both pedestals appropriate for individual time samples as well as for the sum of ADC
     def get_pedestals(self):
 
-        # If we only want to look at one bar, define this here
-        if self.do_one_bar is True:
-            self.in_data = self.in_data[(self.in_data['layer']==1) & (self.in_data['strip']==3)]
+        # Loop through provided ROOT files
+        for i in range(len(self.root_file_name)):
+            with uproot.open(self.root_file_name[i]) as in_file:
+                in_data = in_file.arrays(["layer","end","strip","raw_id","adc","tot","toa","pf_event","pf_spill","pf_ticks"], library="pd")
 
-        # First, we have to create a temporary DataFrame that keeps all 8 time samples to calculate a pedestal to subtract off individual time samples
-        # Process each layer and bar independently
-        grouped_data = self.in_data.groupby(['layer', 'strip'], group_keys=False)
+            # If we only want to look at one bar, define this here
+            if self.do_one_bar is True and self.fpgas[i]==0:
+                in_data = in_data[(in_data['layer']==1) & (in_data['strip']==3)]
 
-        final_result_df = grouped_data.apply(self.__process_group)
+            if self.do_one_bar is True and self.fpgas[i]!=0:
+                continue
 
-        # Select likely pedestal events where the TOA and TOT are both zero on each end of the bar
-        selection = (final_result_df['tot_end0']==0) & (final_result_df['tot_end1']==0) & (final_result_df['toa_end0']==0) & (final_result_df['toa_end1']==0)
+            # First, we have to create a temporary DataFrame that keeps all 8 time samples to calculate a pedestal to subtract off individual time samples
+            # Process each layer and bar independently
+            grouped_data = in_data.groupby(['layer', 'strip'], group_keys=False)
 
-        final_result_df = final_result_df[selection]
+            del in_data
+            
+            final_result_df = grouped_data.apply(self.__process_group)
 
-        # Get individual pedestals
-        grouped_data_individual = final_result_df.groupby(['layer', 'strip'], group_keys=False)
+            # Select likely pedestal events where the TOA and TOT are both zero on each end of the bar
+            selection = (final_result_df['tot_end0']==0) & (final_result_df['tot_end1']==0) & (final_result_df['toa_end0']==0) & (final_result_df['toa_end1']==0)
 
-        grouped_data_individual.apply(self.__get_individual_pedestals)
+            final_result_df = final_result_df[selection]
 
-        # Now we will get the sum of ADC-appropriate pedestals
-        grouped_data_sum = final_result_df.groupby(['layer', 'strip'], group_keys=False)
+            # Get individual pedestals
+            grouped_data_individual = final_result_df.groupby(['layer', 'strip'], group_keys=False)
 
-        grouped_data_sum.apply(self.__get_sum_pedestals)
+            grouped_data_individual.apply(self.__get_individual_pedestals)
+
+            # Now we will get the sum of ADC-appropriate pedestals
+            grouped_data_sum = final_result_df.groupby(['layer', 'strip'], group_keys=False)
+
+            grouped_data_sum.apply(self.__get_sum_pedestals)
 
         # Create our final DataFrame with all pedestals
         ped_df = pd.DataFrame(self.out_ped_sum)
