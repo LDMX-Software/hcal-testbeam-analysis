@@ -32,14 +32,14 @@ class makeAnalysisFiles:
             raise ValueError('Alignment procedure was requested, but only one file was input!')
 
         # Set variables
-        if(type(root_file_name)=='str'):
+        if(type(root_file_name)==str):
             self.root_file_name = [root_file_name]
         else:
             self.root_file_name = root_file_name
         try:
-            self.run_number = root_file_name[0].split('/')[-1].split('_')[5]
+            self.run_number = self.root_file_name[0].split('/')[-1].split('_')[5]
         except:
-            self.run_number = root_file_name[0].split('_')[5]
+            self.run_number = self.root_file_name[0].split('_')[5]
         self.fpgas = []
         for i in range(len(self.root_file_name)):
             self.root_file_name[i] = self.root_file_name[i] + ':ntuplizehgcroc/hgcroc'

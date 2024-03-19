@@ -46,9 +46,9 @@ class calculateMIPs:
         for i in range(len(self.data_file_name)):
             frames.append(pd.read_csv(self.data_file_name[i]))
         try:
-            self.run_number = data_file_name[0].split('/')[-1].split('.')[0].split('_')[1]
+            self.run_number = self.data_file_name[0].split('/')[-1].split('.')[0].split('_')[1]
         except:
-            self.run_number = data_file_name[0].split('.')[0].split('_')[1]
+            self.run_number = self.data_file_name[0].split('.')[0].split('_')[1]
         if(self.run_number != '287'):
             raise ValueError('Expecting run 287 for 4 GeV defocused muons!!')
         self.in_data = pd.concat(frames)

@@ -26,9 +26,9 @@ class selectCleanEvents:
         for i in range(len(self.data_file_name)):
             frames.append(pd.read_csv(self.data_file_name[i]))
         try:
-            self.run_number = data_file_name[0].split('/')[-1].split('.')[0].split('_')[1]
+            self.run_number = self.data_file_name[0].split('/')[-1].split('.')[0].split('_')[1]
         except:
-            self.run_number = data_file_name[0].split('.')[0].split('_')[1]
+            self.run_number = self.data_file_name[0].split('.')[0].split('_')[1]
         self.in_data = pd.concat(frames)
         self.out_directory = out_directory
         self.in_peds = pd.read_csv(pedestal_file_name)

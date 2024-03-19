@@ -29,14 +29,14 @@ class calculatePedestals:
             raise ValueError('Input file format should be a string of a single file name, or a list of strings of multiple file names!')
 
         # Set variables
-        if(type(root_file_name)=='str'):
+        if(type(root_file_name)==str):
             self.root_file_name = [root_file_name]
         else:
             self.root_file_name = root_file_name
         try:
-            self.run_number = root_file_name[0].split('/')[-1].split('_')[5]
+            self.run_number = self.root_file_name[0].split('/')[-1].split('_')[5]
         except:
-            self.run_number = root_file_name[0].split('_')[5]
+            self.run_number = self.root_file_name[0].split('_')[5]
         if(self.run_number != '287'):
             raise ValueError('Expecting run 287 for 4 GeV defocused muons!!')
         self.fpgas = []
