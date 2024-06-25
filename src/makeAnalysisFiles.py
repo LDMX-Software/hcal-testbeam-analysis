@@ -204,10 +204,10 @@ class makeAnalysisFiles:
                     in_data = in_file.arrays(["layer","end","strip","raw_id","adc","tot","toa","pf_event","pf_spill","pf_ticks"], library="pd")
 
                 # If we only want to look at one bar, define this here
-                if self.do_one_bar is True and self.fpgas[i]==0:
+                if self.do_one_bar is True and int(self.fpgas[i])==0:
                     in_data = in_data[(in_data['layer']==1) & (in_data['strip']==3)]
 
-                if self.do_one_bar is True and self.fpgas[i]!=0:
+                if self.do_one_bar is True and int(self.fpgas[i])!=0:
                     continue
 
                 # Process each layer and bar independently
