@@ -5,7 +5,7 @@ import os
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.cm import get_cmap
+from matplotlib.pyplot import get_cmap
 import mplhep as hep
 
 hep.style.use(hep.style.ATLAS)
