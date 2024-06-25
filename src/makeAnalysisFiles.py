@@ -14,7 +14,7 @@ from apply_calibrations import *
 
 # Main class to make analysis files (output is csv format)
 class makeAnalysisFiles:
-    def __init__(self, root_file_name, out_directory='../analysis_files/', calibration_file='../calibrations/toa_calibration_phase3.csv', do_one_bar=False, do_alignment=True, alignment_threshold=20):
+    def __init__(self, root_file_name, out_directory='../analysis_files/', calibration_file='../calibrations/toa_calibration_phase3.csv', do_one_bar=False, do_alignment=True, alignment_threshold=20, output_pulse_shapes=False):
         '''
         Initalization
         @param root_file_name: str or list of str pointing to input ROOT files
@@ -23,6 +23,7 @@ class makeAnalysisFiles:
         @param do_one_bar: debug flag, performs chain on only one bar
         @param do_alignment: set True if alignment of FPGAs should be performed- if True, then root_file_name should be a list of strs
         @param alignment_threshold: tolerance when considering how different pf_ticks can be between the two FPGAs to consider that event aligned
+        @param output_pulse_shapes: save all 8 ADC samples to the output csv
         '''
 
         # Checks to see if the type of object passed as root_file_name is compatible with a request for alignment
@@ -52,6 +53,7 @@ class makeAnalysisFiles:
         self.toa_cal_file = pd.read_csv(calibration_file)
         self.do_alignment = do_alignment
         self.alignment_threshold = alignment_threshold
+        self.output_pulse_shapes = output_pulse_shapes
 
         # Create the directory if it doesn't exist
         if not os.path.exists(self.out_directory):
@@ -144,19 +146,42 @@ class makeAnalysisFiles:
 
     # Perform aggregation, where we extract one value for TOT, calibrated TOA and sum, max, mean of all 8 ADC values per event
     def __get_each_end(self, data_frame, end, toa_list):
-        aggregated_end = data_frame[data_frame['end'] == end].groupby('pf_event').agg({
-            'layer': 'first',
-            'strip': 'first',
-            'pf_spill': 'first',
-            'pf_ticks': 'first',
-            'tot': tot_calib,
-            'toa': lambda x: toa_calib(x,toa_list,end),
-            'adc': ['sum', 'mean', 'max']
-        }).reset_index()
 
-        aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max']
+        if self.output_pulse_shapes:
+            aggregated_end = data_frame[data_frame['end'] == end].groupby('pf_event').agg({
+                'layer': 'first',
+                'strip': 'first',
+                'pf_spill': 'first',
+                'pf_ticks': 'first',
+                'tot': tot_calib,
+                'toa': lambda x: toa_calib(x,toa_list,end),
+                'adc': ['sum', 'mean', 'max',  
+                    lambda x: x.iloc[0], lambda x: x.iloc[1], lambda x: x.iloc[2], lambda x: x.iloc[3], 
+                    lambda x: x.iloc[4], lambda x: x.iloc[5], lambda x: x.iloc[6], lambda x: x.iloc[7]]
+            }).reset_index()
+            aggregated_end.rename(columns={'adc_<lambda_0>':'adc_0','adc_<lambda_1>':'adc_1','adc_<lambda_2>':'adc_2','adc_<lambda_3>':'adc_3',
+                'adc_<lambda_4>':'adc_4','adc_<lambda_5>':'adc_5','adc_<lambda_6>':'adc_6','adc_<lambda_7>':'adc_7'})
 
-        return aggregated_end
+            #aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max', 'adc_first', 'adc_<lambda_0>', 'adc_<lambda_1>']
+            aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max',  
+                    'adc_0', 'adc_1', 'adc_2', 'adc_3', 'adc_4', 'adc_5', 'adc_6', 'adc_7']
+
+            return aggregated_end
+        else:
+            aggregated_end = data_frame[data_frame['end'] == end].groupby('pf_event').agg({
+                'layer': 'first',
+                'strip': 'first',
+                'pf_spill': 'first',
+                'pf_ticks': 'first',
+                'tot': tot_calib,
+                'toa': lambda x: toa_calib(x,toa_list,end),
+                'adc': ['sum', 'mean', 'max']
+            }).reset_index()
+
+            aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max']
+            
+            return aggregated_end
+
 
     # Clean per-end DataFrames for useable formats
     def __clean_frame(self, aggregated_end0, aggregated_end1):
