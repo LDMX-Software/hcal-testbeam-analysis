@@ -5,7 +5,7 @@ import os
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.cm import get_cmap
+from matplotlib.pyplot import get_cmap
 import mplhep as hep
 
 hep.style.use(hep.style.ATLAS)
@@ -58,22 +58,23 @@ class makeAnalysisFiles:
             os.makedirs(self.out_directory)
 
     # Find events that have consistent pf_ticks in the two FPGAs
-    def __align_ticks(self):
+    def __align_ticks(self, data, layer, align_file_nbr):
         print('Performing alignment')
 
-        # Open files
-        with uproot.open(self.root_file_name[0]) as in_file:
-            in_data1 = in_file.arrays(["pf_event","pf_spill","pf_ticks"], library="pd")
-
-        with uproot.open(self.root_file_name[1]) as in_file:
-            in_data2 = in_file.arrays(["pf_event","pf_spill","pf_ticks"], library="pd")
+        data = data["pf_event", "pf_spill", "pf_ticks"]
+        # Open file
+        with uproot.open(self.root_file_name[align_file_nbr]) as in_file:
+            cut = "layer == " + str(layer)
+            in_data = pd.DataFrame()
+            for batch in in_file.iterate(["pf_event", "pf_spill", "pf_ticks"], cut, library="pd", stepsize="10 MB"):
+                in_data = pd.concat([in_data, batch])
 
         # Find unique values
-        in_data1 = in_data1.drop_duplicates().reset_index()
-        in_data2 = in_data2.drop_duplicates().reset_index()
+        data = data.drop_duplicates().reset_index()
+        in_data = in_data.drop_duplicates().reset_index()
 
-        spills_data1 = in_data1['pf_spill'].drop_duplicates().to_list()
-        spills_data2 = in_data2['pf_spill'].drop_duplicates().to_list()
+        spills_data1 = data['pf_spill'].drop_duplicates().to_list()
+        spills_data2 = in_data['pf_spill'].drop_duplicates().to_list()
 
         spills = list(set(spills_data1).intersection(spills_data2))
 
@@ -84,8 +85,8 @@ class makeAnalysisFiles:
         for spill in spills:
             print('Doing spill: ', spill)
 
-            data1_ = in_data1[in_data1['pf_spill']==spill]
-            data2_ = in_data2[in_data2['pf_spill']==spill]
+            data1_ = data[data['pf_spill']==spill]
+            data2_ = in_data[in_data['pf_spill']==spill]
 
             num_rows_1 = len(data1_)
             num_rows_2 = len(data2_)
@@ -124,15 +125,16 @@ class makeAnalysisFiles:
         return zero_pf_events, one_pf_events
 
     # Rework this FPGA file such that only aligned events are kept and reindex pf_events such that they are consistent between the FPGAs
-    def __process_half(self, data_file, pf_events, half):
+    def __process_half(self, data, pf_events, half):
         print('Processing half: ',half)
-        with uproot.open(data_file) as in_file:
-            in_data = in_file.arrays(["layer","end","strip","raw_id","adc","tot","toa","pf_event","pf_spill","pf_ticks"], library="pd")
+        """ with uproot.open(data_file) as in_file:
+            filtered_df = pd.DataFrame()
+            for batch in in_file.iterate(
+                    ["layer","end","strip","raw_id","adc","tot","toa","pf_event","pf_spill","pf_ticks"],
+                    library="pd", step_size="10 MB"):
 
-        filtered_df = in_data[in_data['pf_event'].isin(pf_events)]
-
-        del in_data
-
+                filtered_df = pd.concat(filtered_df, batch[batch['pf_event'].isin(pf_events)])"""
+        filtered_df = data[data['pf_event'].isin(pf_events)]
         pf_events_ = {}
 
         for i in range(len(pf_events)):
@@ -199,56 +201,125 @@ class makeAnalysisFiles:
         if(self.do_alignment is False):
 
             # Loop through provided ROOT files
-            for i in range(len(self.root_file_name)):
-                with uproot.open(self.root_file_name[i]) as in_file:
-                    in_data = in_file.arrays(["layer","end","strip","raw_id","adc","tot","toa","pf_event","pf_spill","pf_ticks"], library="pd")
+            for j in range(len(self.root_file_name)):
+                # number of layers in the LDMX HCAL prototype
+                layers = 19
+                for i in range(layers):
+                    in_data = pd.DataFrame()
+                    with uproot.open(self.root_file_name[j]) as in_file:
+                        print('reading file for layer ', i + 1, '...')
+                        cut = "layer == " + str(i + 1)
+                        batchnbr = 1
+                        for batch in in_file.iterate(
+                                ["layer","end","strip","raw_id","adc","tot","toa","pf_event","pf_spill","pf_ticks"],
+                                cut, library="pd", step_size="10 MB"):
+                            print("batch: ", batchnbr)
+                            in_data = pd.concat([in_data, batch])
+                            batchnbr += 1
 
-                # If we only want to look at one bar, define this here
-                if self.do_one_bar is True and self.fpgas[i]==0:
-                    in_data = in_data[(in_data['layer']==1) & (in_data['strip']==3)]
+                    # If we only want to look at one bar, define this here
+                    if self.do_one_bar is True and self.fpgas[j]==0:
+                        in_data = in_data[(in_data['layer']==1) & (in_data['strip']==3)]
 
-                if self.do_one_bar is True and self.fpgas[i]!=0:
-                    continue
+                    if self.do_one_bar is True and self.fpgas[j]!=0:
+                        continue
 
-                # Process each layer and bar independently
-                grouped_data = in_data.groupby(['layer', 'strip'], group_keys=False)
+                    # Process each layer and bar independently
+                    grouped_data = in_data.groupby(['layer', 'strip'], group_keys=False)
 
-                result_df = grouped_data.apply(self.__process_group)
+                    del in_data
 
-                # Save to csv file
-                result_df.to_csv(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[i] + '.csv', index=False)
+                    result_df = grouped_data.apply(self.__process_group)
+
+                    del grouped_data
+
+                    # Save to csv file
+                    result_df.to_csv(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[j] + '.csv', index=False)
+
+                    del result_df
+
+
 
         # If we are doing alignment
         if(self.do_alignment is True):
             if self.do_one_bar is True:
                 raise ValueError('Alignment is requested and the debugging feature is also requested. Does not make sense to align but only look at one bar!')
 
-            # Align
-            zero_pf_events, one_pf_events = self.__align_ticks()
+            # read data
+            layers = 19
+            for i in range(layers):
+                in_data = pd.DataFrame()
+                with uproot.open(self.root_file_name[0]) as in_file:
+                    print('reading file for layer ', i + 1, '...')
+                    cut = "layer == " + str(i + 1)
+                    batchnbr = 1
+                    for batch in in_file.iterate(
+                            ["layer", "end", "strip", "raw_id", "adc", "tot", "toa", "pf_event", "pf_spill",
+                             "pf_ticks"],
+                            cut, library="pd", step_size="10 MB"):
+                        print("batch: ", batchnbr)
+                        in_data = pd.concat([in_data, batch])
+                        batchnbr += 1
 
-            # Process FPGA 0
-            aligned_data0 = self.__process_half(self.root_file_name[0], zero_pf_events, 0)
+                # Align
+                zero_pf_events, one_pf_events = self.__align_ticks(in_data, i, 1)
 
-            # Process each layer and bar independently
-            grouped_data0 = aligned_data0.groupby(['layer', 'strip'], group_keys=False)
+                # Process FPGA 0
+                aligned_data0 = self.__process_half(in_data, zero_pf_events, 0)
 
-            result_df0 = grouped_data0.apply(self.__process_group)
+                del in_data, zero_pf_events, one_pf_events
 
-            # Save to csv file
-            result_df0.to_csv(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[0] + '.csv', index=False)
+                # Process each layer and bar independently
+                grouped_data0 = aligned_data0.groupby(['layer', 'strip'], group_keys=False)
 
-            del zero_pf_events, aligned_data0, grouped_data0, result_df0
+                del aligned_data0
 
-            # Process FPGA 1
-            aligned_data1 = self.__process_half(self.root_file_name[1], one_pf_events, 1)
+                result_df0 = grouped_data0.apply(self.__process_group)
 
-            # Process each layer and bar independently
-            grouped_data1 = aligned_data1.groupby(['layer', 'strip'], group_keys=False)
+                del grouped_data0
 
-            result_df1 = grouped_data1.apply(self.__process_group)
+                # Save to csv file
+                result_df0.to_csv(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[0] + '.csv', index=False)
 
-            # Save to csv file
-            result_df1.to_csv(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[1] + '.csv', index=False)
+                del  result_df0
+
+                # read data
+                layers = 19
+                for i in range(layers):
+                    in_data = pd.DataFrame()
+                    with uproot.open(self.root_file_name[1]) as in_file:
+                        print('reading file for layer ', i + 1, '...')
+                        cut = "layer == " + str(i + 1)
+                        batchnbr = 1
+                        for batch in in_file.iterate(
+                                ["layer", "end", "strip", "raw_id", "adc", "tot", "toa", "pf_event", "pf_spill",
+                                 "pf_ticks"],
+                                cut, library="pd", step_size="10 MB"):
+                            print("batch: ", batchnbr)
+                            in_data = pd.concat([in_data, batch])
+                            batchnbr += 1
+
+                    # Align
+                    zero_pf_events, one_pf_events = self.__align_ticks(in_data, i, 0)
+
+                    # Process FPGA 1
+                    aligned_data1 = self.__process_half(in_data, one_pf_events, 1)
+
+                    del in_data, zero_pf_events, one_pf_events
+
+                    # Process each layer and bar independently
+                    grouped_data1 = aligned_data1.groupby(['layer', 'strip'], group_keys=False)
+
+                    del aligned_data1
+
+                    result_df1 = grouped_data1.apply(self.__process_group)
+
+                    del grouped_data1
+
+                    # Save to csv file
+                    result_df1.to_csv(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[1] + '.csv', index=False)
+
+                    del result_df
 
 
     # Admittedly dirty function that makes many plots
