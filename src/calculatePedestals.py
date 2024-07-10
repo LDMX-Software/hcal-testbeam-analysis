@@ -3,6 +3,7 @@ import numpy as np
 import uproot
 import os
 import scipy.stats as stats
+import scipy.signal as signal
 from statistics import mean, stdev, median
 import matplotlib
 import matplotlib.pyplot as plt
@@ -17,7 +18,7 @@ hep.style.use(hep.style.ATLAS)
 # Main class to calculate and save pedestals
 class calculatePedestals:
     def __init__(self, root_file_name, out_directory='../calibrations/', plot_pedestals=True,
-                 plots_directory='../plots/pedestals', do_one_bar=False, layer_wise=False, in_batches=False, time_trend=False, noise_threshold=50):
+                 plots_directory='../plots/pedestals', do_one_bar=False, layer_wise=False, in_batches=False, time_trend=False):
         '''
         Initalization
         @param root_file_name: str or list of str pointing to input ROOT files
@@ -60,7 +61,6 @@ class calculatePedestals:
         self.time_trend = time_trend
         self.layer_wise = layer_wise
         self.in_batches = in_batches
-        self.noise_threshold = noise_threshold
         if (self.in_batches):
             self.layer_wise = True
         self.out_ped_individ = {}
@@ -144,36 +144,32 @@ class calculatePedestals:
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_0'] = pedestal0
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_1'] = pedestal1
 
+        # Identify peak widths
+        bins_0 = max(end_0) - min(end_0)
+        bins_1 = max(end_1) - min(end_1)
+        hist_0 = np.histogram(end_0, bins=bins_0)[0]
+        hist_1 = np.histogram(end_1, bins=bins_1)[0]
+        # Under the assumption that the location in hist of max(hist) = pedestal
+        hist_0_max = max(hist_0)
+        hist_1_max = max(hist_1)
+        peak_width_0 = signal.peak_widths(hist_0, np.where(hist_0 == hist_0_max)[0])[0]
+        peak_width_1 = signal.peak_widths(hist_1, np.where(hist_1 == hist_1_max)[0])[0]
+
         # cut away high and low noise
-        selection0 = ()
-        selection1 = ()
-
-        group = group.loc[pedestal0 + self.noise_threshold >= group['adc_end_0'] >= pedestal0 - self.noise_threshold]
-        group = group.loc[pedestal0 + self.noise_threshold >= group['adc_end_1'] >= pedestal0 - self.noise_threshold]
-
-        index0 = group.columns.str.contains(r'adc_end_0')
-        end_0 = group.iloc[:, index0].to_numpy().flatten()
-
-        index1 = group.columns.str.contains(r'adc_end_1')
-        end_1 = group.iloc[:, index1].to_numpy().flatten()
+        end_0_cut = end_0[(end_0 <= pedestal0 + peak_width_0 * 3) & (end_0 >= pedestal0 - peak_width_0 * 3)]
+        end_1_cut = end_1[(end_1 <= pedestal1 + peak_width_1 * 3) & (end_1 >= pedestal1 - peak_width_1 * 3)]
 
         # Fit a Gaussian to the pedestals
-        mean0, std_dev0 = stats.norm.fit(end_0)
-        mean1, std_dev1 = stats.norm.fit(end_1)
+        mean0, std_dev0 = stats.norm.fit(end_0_cut)
+        mean1, std_dev1 = stats.norm.fit(end_1_cut)
 
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_0'] = mean0
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_0'] = std_dev0
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_1'] = mean1
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_1'] = std_dev1
-
-        self.__plot_pedestal(end_0, layer, bar, 0,
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_0'],
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_0'],
-                             sum_pedestal=False, log_scale=True)
-        self.__plot_pedestal(end_1, layer, bar, 0,
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_1'],
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_1'],
-                             sum_pedestal=False, log_scale=True)
+        if self.plot_pedestals:
+            self.__plot_pedestal(end_0, layer, bar, 0, mean0, std_dev0, sum_pedestal=False, log_scale=True)
+            self.__plot_pedestal(end_1, layer, bar, 1, mean1, std_dev1, sum_pedestal=False, log_scale=True)
 
     def __plot_pedestal(self, dataframe, layer, bar, end, mean, std_dev, sum_pedestal=True, log_scale=True):
         print("creating plots: layer: ", layer, "bar: ", bar)
@@ -252,15 +248,42 @@ class calculatePedestals:
         group['adc_sum_end0'] = group['adc_sum_end0'] - (pedestal_temp0)
         group['adc_sum_end1'] = group['adc_sum_end1'] - (pedestal_temp1)
 
+        # I don't really understand the point of this? Why are we doing this?
         # Select sum pedestal region for plotting
         fit0_ = (group['adc_sum_end0'] < 200) & (group['adc_sum_end0'] > -200)
         fit1_ = (group['adc_sum_end1'] < 200) & (group['adc_sum_end1'] > -200)
         fit0 = group[fit0_]
         fit1 = group[fit1_]
 
+        # Identify peak widths
+        end_0 = fit0['adc_sum_end0'].to_numpy().flatten()
+        end_1 = fit1['adc_sum_end1'].to_numpy().flatten()
+        print('end_0 in sum: ', end_0)
+        bins_0 = max(end_0) - min(end_0)
+        bins_1 = max(end_1) - min(end_1)
+        hist_0 = np.histogram(end_0, bins=bins_0)[0]
+        print('hist_0 in sum: ', hist_0)
+        hist_1 = np.histogram(end_1, bins=bins_1)[0]
+        # Under the assumption that the location in hist of max(hist) + min(end) = pedestal
+        hist_0_max_loc = np.where(hist_0 == max(hist_0))[0]
+        hist_1_max_loc = np.where(hist_1 == max(hist_1))[0]
+        peak_width_0 = signal.peak_widths(hist_0, hist_0_max_loc)[0]
+        print('peak_width in sum: ', peak_width_0)
+        peak_width_1 = signal.peak_widths(hist_1, hist_1_max_loc)[0]
+
+        # cut away high and low noise
+        end_0_cut = end_0[(end_0 <= hist_0_max_loc + min(end_0) + peak_width_0 * 3) & (end_0 >= hist_0_max_loc + min(end_0) - peak_width_0 * 3)]
+        print('end_0_cut in sum: ', end_0_cut)
+        end_1_cut = end_1[(end_1 <= hist_1_max_loc + min(end_1) + peak_width_1 * 3) & (end_1 >= hist_1_max_loc + min(end_1) - peak_width_1 * 3)]
+
+        del end_0, end_1
+
         # Fit a Gaussian to the pedestals
-        mean0, std_dev0 = stats.norm.fit(fit0['adc_sum_end0'])
-        mean1, std_dev1 = stats.norm.fit(fit1['adc_sum_end1'])
+        mean0, std_dev0 = stats.norm.fit(end_0_cut)
+        print('mean0 and std_dev0 in sum: ', mean0, std_dev0)
+        mean1, std_dev1 = stats.norm.fit(end_1_cut)
+
+        del end_0_cut, end_1_cut
 
         self.out_ped_sum['layer'].append(layer)
         self.out_ped_sum['strip'].append(bar)
@@ -350,6 +373,7 @@ class calculatePedestals:
         # Get individual pedestals
         grouped_data_individual = final_result_df.groupby(['layer', 'strip'], group_keys=False)
 
+        print('getting individual pedestals')
         grouped_data_individual.apply(self.__get_individual_pedestals)
 
         # Now we will get the sum of ADC-appropriate pedestals
@@ -463,10 +487,22 @@ class calculatePedestals:
         index = group.columns.str.contains('adc')
         data = group.iloc[:, index].to_numpy().flatten()
 
-        self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_' + str(end)] = stats.mode(data)[0]
+        pedestal = stats.mode(data)[0]
+        self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_' + str(end)] = pedestal
+
+        # Identify peak widths
+        # TODO: Note that number of bins are hard coded to 1023. i.e. how high the ADC goes, not very generic!
+        bins = max(data) - min(data)
+        hist = np.histogram(data, bins=bins)[0]
+        # Under the assumption that the location in hist of max(hist) = pedestal
+        hist_max = max(hist)
+        peak_width = signal.peak_widths(hist, np.where(hist == hist_max)[0])[0]
+
+        # cut away high and low noise
+        data_cut = data[(data <= pedestal + peak_width * 3) & (data >= pedestal - peak_width * 3)]
 
         # Fit a Gaussian to the pedestals
-        mean, std_dev = stats.norm.fit(data)
+        mean, std_dev = stats.norm.fit(data_cut)
 
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_' + str(end)] = mean
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_' + str(end)] = std_dev
@@ -490,11 +526,28 @@ class calculatePedestals:
         group['adc_sum_end' + str(end)] = 8 * group['adc'] - pedestal_temp0
 
         # Select sum pedestal region for plotting
+        # Still unsure why we do this, but for the sake of consistency it's here
         fit_ = (group['adc_sum_end' + str(end)] < 200) & (group['adc_sum_end' + str(end)] > -200)
         fit = group[fit_]
 
+        # Identify peak widths
+        data = fit['adc_sum_end0'].to_numpy().flatten()
+        # TODO: Note that the bins (and rage) are hard coded to 1023 * 8. i.e. how high the sumADC max goes, not very generic!
+        bins = max(data) - min(data)
+        hist = np.histogram(data, bins=bins)[0]
+        # Under the assumption that the location in hist of max(hist) + min(data) = pedestal
+        hist_max_loc = np.where(hist == max(hist))[0]
+        peak_width = signal.peak_widths(hist, hist_max_loc)[0]
+
+        # cut away high and low noise
+        data_cut = data[(data <= hist_max_loc + min(data) + peak_width * 3) & (data >= hist_max_loc + min(data) - peak_width * 3)]
+
+        del data
+
         # Fit a Gaussian to the pedestals
-        mean, std_dev = stats.norm.fit(fit['adc_sum_end' + str(end)])
+        mean, std_dev = stats.norm.fit(data_cut)
+
+        del data_cut
 
         self.out_ped_sum['layer'].append(layer)
         self.out_ped_sum['strip'].append(bar)
@@ -564,7 +617,7 @@ class calculatePedestals:
                             batchnbr = 1
                             for batch in in_file.iterate(
                                     ["layer", "end", "strip", "raw_id", "adc", "tot", "toa", "pf_event", "pf_spill",
-                                     "pf_ticks"], cut, library="pd", step_size="50 MB"):
+                                     "pf_ticks"], cut, library="pd", step_size="10 MB"):
                                 print("batch: ", batchnbr)
                                 in_data = pd.concat([in_data, batch])
                                 batchnbr += 1
