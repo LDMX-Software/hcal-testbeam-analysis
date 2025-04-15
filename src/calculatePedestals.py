@@ -3,6 +3,7 @@ import numpy as np
 import uproot
 import os
 import scipy.stats as stats
+import scipy.signal as signal
 from statistics import mean, stdev, median
 import matplotlib
 import matplotlib.pyplot as plt
@@ -17,7 +18,7 @@ hep.style.use(hep.style.ATLAS)
 # Main class to calculate and save pedestals
 class calculatePedestals:
     def __init__(self, root_file_name, out_directory='../calibrations/', plot_pedestals=True,
-                 plots_directory='../plots/pedestals', do_one_bar=False, layer_wise=False, in_batches=False, time_trend=False, noise_threshold=50):
+                 plots_directory='../plots/pedestals', do_one_bar=False, layer_wise=False, in_batches=False, time_trend=False):
         '''
         Initalization
         @param root_file_name: str or list of str pointing to input ROOT files
@@ -60,7 +61,6 @@ class calculatePedestals:
         self.time_trend = time_trend
         self.layer_wise = layer_wise
         self.in_batches = in_batches
-        self.noise_threshold = noise_threshold
         if (self.in_batches):
             self.layer_wise = True
         self.out_ped_individ = {}
@@ -135,82 +135,107 @@ class calculatePedestals:
 
         index0 = group.columns.str.contains(r'adc_end_0')
         end_0 = group.iloc[:, index0].to_numpy().flatten()
+        end_0 = np.nan_to_num(end_0)
 
         index1 = group.columns.str.contains(r'adc_end_1')
         end_1 = group.iloc[:, index1].to_numpy().flatten()
+        end_1 = np.nan_to_num(end_1)
 
         pedestal0 = stats.mode(end_0)[0]
         pedestal1 = stats.mode(end_1)[0]
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_0'] = pedestal0
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_1'] = pedestal1
 
+        # Identify peak widths
+        bins_0 = 1024 # int(max(end_0) - min(end_0)) + 1
+        bins_1 = 1024 # int(max(end_1) - min(end_1)) + 1
+        hist_0 = np.histogram(end_0, range=[0, 1023], bins=bins_0)[0]
+        hist_1 = np.histogram(end_1, range=[0, 1023], bins=bins_1)[0]
+
+        # Under the assumption that the location in hist of max(hist) = pedestal
+        hist_0_max_loc = np.where(hist_0 == max(hist_0))[0]
+        hist_1_max_loc = np.where(hist_1 == max(hist_1))[0]
+        peak_width_0 = signal.peak_widths(hist_0, hist_0_max_loc)[0]
+        peak_width_1 = signal.peak_widths(hist_1, hist_1_max_loc)[0]
+        peak_width_0[peak_width_0 < 1] = 1
+        peak_width_1[peak_width_1 < 1] = 1
+
         # cut away high and low noise
-        selection0 = ()
-        selection1 = ()
-
-        group = group.loc[pedestal0 + self.noise_threshold >= group['adc_end_0'] >= pedestal0 - self.noise_threshold]
-        group = group.loc[pedestal0 + self.noise_threshold >= group['adc_end_1'] >= pedestal0 - self.noise_threshold]
-
-        index0 = group.columns.str.contains(r'adc_end_0')
-        end_0 = group.iloc[:, index0].to_numpy().flatten()
-
-        index1 = group.columns.str.contains(r'adc_end_1')
-        end_1 = group.iloc[:, index1].to_numpy().flatten()
+        if len(hist_0_max_loc) > 1:
+            end_0_cut = end_0[(end_0 <= min(hist_0_max_loc) + peak_width_0[0] * 3) & (
+                    end_0 >= max(hist_0_max_loc) - peak_width_0[-1] * 3)]
+        else:
+            end_0_cut = end_0[(end_0 <= hist_0_max_loc + peak_width_0 * 3) & (
+                        end_0 >= hist_0_max_loc - peak_width_0 * 3)]
+        if len(hist_1_max_loc) > 1:
+            end_1_cut = end_1[(end_1 <= min(hist_1_max_loc) + peak_width_1[0] * 3) & (
+                    end_1 >= max(hist_1_max_loc) - peak_width_1[-1] * 3)]
+        else:
+            end_1_cut = end_1[(end_1 <= hist_1_max_loc + peak_width_1 * 3) & (
+                        end_1 >= hist_1_max_loc - peak_width_1 * 3)]
 
         # Fit a Gaussian to the pedestals
-        mean0, std_dev0 = stats.norm.fit(end_0)
-        mean1, std_dev1 = stats.norm.fit(end_1)
+        mean0, std_dev0 = stats.norm.fit(end_0_cut)
+        mean1, std_dev1 = stats.norm.fit(end_1_cut)
 
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_0'] = mean0
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_0'] = std_dev0
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_1'] = mean1
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_1'] = std_dev1
-
-        self.__plot_pedestal(end_0, layer, bar, 0,
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_0'],
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_0'],
-                             sum_pedestal=False, log_scale=True)
-        self.__plot_pedestal(end_1, layer, bar, 0,
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_1'],
-                             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_1'],
-                             sum_pedestal=False, log_scale=True)
+        if self.plot_pedestals:
+            self.__plot_pedestal(end_0, layer, bar, 0, mean0, std_dev0, sum_pedestal=False, log_scale=True)
+            self.__plot_pedestal(end_1, layer, bar, 1, mean1, std_dev1, sum_pedestal=False, log_scale=True)
 
     def __plot_pedestal(self, dataframe, layer, bar, end, mean, std_dev, sum_pedestal=True, log_scale=True):
         print("creating plots: layer: ", layer, "bar: ", bar)
+        if mean == np.NaN or std_dev == np.NaN:
+            return
         # Define figure for end and plot
         fig = plt.figure(num=1, clear=True)
         ax = fig.add_subplot()
         # fig,ax = plt.subplots(figsize=(8, 8))
-        if (sum_pedestal):
-            ax.hist(dataframe, bins=100, density=True, histtype='step', range=[-200, 400])
-        else:
-            ax.hist(dataframe, bins=100, density=True, histtype='step', range=[0, 400])
+
+        # Legend labels
+        length = len(dataframe)
+        label1 = 'Entires: ' + str(length)
+
+        window = [int(mean - 10 * std_dev), int(mean + 20 * std_dev)]
+        bins = int((window[1] - window[0]))
+
+        ax.hist(dataframe, bins=bins, density=True, histtype='step', range=window, label=label1, linewidth=2)
 
         xmin, xmax = ax.get_xlim()
-        x = np.linspace(xmin, xmax, 100)
+        x = np.linspace(xmin, xmax, 1000)
         p = stats.norm.pdf(x, mean, std_dev)
 
-        ax.plot(x, p, 'k', linewidth=2)
+        label2 = 'Mean: ' + str(round(mean, 6)) + '\n' + 'Std Dev: ' + str(round(std_dev, 6))
 
+        ax.plot(x, p, 'k', linestyle='--', linewidth=2, label=label2)
+        ax.set_ylim(0, 1.5)
         if (log_scale):
             ax.set_yscale('log')
+            ax.set_ylim(10**-5, 1.5)
         if (sum_pedestal):
-            ax.set_xlabel('Sum ADC ' + str(end))
+            ax.set_xlabel('Sum ADC ')
         else:
-            ax.set_xlabel('ADC ' + str(end))
-        ax.set_ylabel('Events')
+            ax.set_xlabel('ADC')
+        ax.set_ylabel('Events (Normalized to density)')
         if (log_scale):
-            ax.set_ylim(1e-8, 1)
-        ax.legend()
+            ax.set_ylim(1e-4, 1)
+        ax.legend(loc="upper right")
 
         if (sum_pedestal):
-            ax.set_title(
-                'Sum pedestal layer: ' + str(layer) + ' Bar: ' + str(bar) + ' Side: ' + str(end) + ' mean: ' + str(
-                    round(mean, 2)) + ' std_dev: ' + str(round(std_dev, 2)))
+            ax.set_title('Pedestal of adc sum layer: ' + str(layer) + ' Bar: ' + str(bar) + ' Side: ' + str(
+                 end))
+            # ax.set_title(
+                # 'Sum pedestal layer: ' + str(layer) + ' Bar: ' + str(bar) + ' End: ' + str(end) + ' mean: ' + str(
+                    # round(mean, 2)) + ' std_dev: ' + str(round(std_dev, 2)))
         else:
-            ax.set_title('Pedestal per time step layer: ' + str(layer) + ' Bar: ' + str(bar) + ' Side: ' + str(
-                end) + ' mean: ' + str(
-                round(mean, 2)) + ' std_dev: ' + str(round(std_dev, 2)))
+            ax.set_title('Pedestal layer: ' + str(layer) + ' Bar: ' + str(bar) + ' Side: ' + str(
+                 end))
+            # ax.set_title('Pedestal per time step layer: ' + str(layer) + ' Bar: ' + str(bar) + ' Side: ' + str(
+                # end) + ' mean: ' + str(
+                # round(mean, 2)) + ' std_dev: ' + str(round(std_dev, 2)))
 
         if (sum_pedestal):
             plt.savefig(
@@ -244,23 +269,61 @@ class calculatePedestals:
     def __get_sum_pedestals(self, group):
         layer, bar = group.name
 
+        # number of time samples per pulse
+        matching_columns = [col for col in group.columns if 'adc_end_0' in col]
+        count = len(matching_columns)
+
         # Obtain pedestal appropriate for summation of all 8 time samples
-        pedestal_temp0 = 8 * self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_0']
-        pedestal_temp1 = 8 * self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_1']
+        pedestal_temp0 = count * self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_0']
+        pedestal_temp1 = count * self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_1']
 
         # Apply pedestal to sum of ADC events
         group['adc_sum_end0'] = group['adc_sum_end0'] - (pedestal_temp0)
         group['adc_sum_end1'] = group['adc_sum_end1'] - (pedestal_temp1)
 
+        # I don't really understand the point of this? Why are we doing this?
         # Select sum pedestal region for plotting
         fit0_ = (group['adc_sum_end0'] < 200) & (group['adc_sum_end0'] > -200)
         fit1_ = (group['adc_sum_end1'] < 200) & (group['adc_sum_end1'] > -200)
         fit0 = group[fit0_]
         fit1 = group[fit1_]
 
+        # Identify peak widths
+        end_0 = fit0['adc_sum_end0'].to_numpy().flatten()
+        end_1 = fit1['adc_sum_end1'].to_numpy().flatten()
+
+        bins_0 = int(max(end_0) - min(end_0))
+        bins_1 = int(max(end_1) - min(end_1))
+        hist_0 = np.histogram(end_0, bins=bins_0)[0]
+
+        hist_1 = np.histogram(end_1, bins=bins_1)[0]
+
+        # Under the assumption that the location in hist of max(hist) + min(end) = pedestal
+        hist_0_max_loc = np.where(hist_0 == max(hist_0))[0]
+        hist_1_max_loc = np.where(hist_1 == max(hist_1))[0]
+        peak_width_0 = signal.peak_widths(hist_0, hist_0_max_loc)[0]
+        peak_width_1 = signal.peak_widths(hist_1, hist_1_max_loc)[0]
+
+        if len(hist_0_max_loc) > 1:
+            end_0_cut = end_0[(end_0 <= min(hist_0_max_loc) + peak_width_0[0] * 3) & (
+                        end_0 >= max(hist_0_max_loc) - peak_width_0[-1] * 3)]
+        # cut away high and low noise
+        else:
+            end_0_cut = end_0[(end_0 <= hist_0_max_loc + min(end_0) + peak_width_0 * 3) & (end_0 >= hist_0_max_loc + min(end_0) - peak_width_0 * 3)]
+        if len(hist_1_max_loc) > 1:
+            end_1_cut = end_1[(end_1 <= min(hist_1_max_loc) + min(end_1) + peak_width_1[0] * 3) & (
+                        end_1 >= max(hist_1_max_loc) + min(end_1) - peak_width_1[-1] * 3)]
+        else:
+            end_1_cut = end_1[(end_1 <= hist_1_max_loc + min(end_1) + peak_width_1 * 3) & (end_1 >= hist_1_max_loc + min(end_1) - peak_width_1 * 3)]
+
+        del end_0, end_1
+
         # Fit a Gaussian to the pedestals
-        mean0, std_dev0 = stats.norm.fit(fit0['adc_sum_end0'])
-        mean1, std_dev1 = stats.norm.fit(fit1['adc_sum_end1'])
+        mean0, std_dev0 = stats.norm.fit(end_0_cut)
+
+        mean1, std_dev1 = stats.norm.fit(end_1_cut)
+
+        del end_0_cut, end_1_cut
 
         self.out_ped_sum['layer'].append(layer)
         self.out_ped_sum['strip'].append(bar)
@@ -340,16 +403,15 @@ class calculatePedestals:
         print('finished processing groups')
 
         # Select likely pedestal events where the TOA and TOT are both zero on each end of the bar
-        selection = (final_result_df['tot_end0'] == 0) & (final_result_df['tot_end1'] == 0) & (
-                final_result_df['toa_end0'] == 0) & (final_result_df['toa_end1'] == 0)
+        # selection = (final_result_df['tot_end0'] == 0) & (final_result_df['tot_end1'] == 0) & (
+        #         final_result_df['toa_end0'] == 0) & (final_result_df['toa_end1'] == 0)
 
-        final_result_df = final_result_df[selection]
-
-        final_result_df.to_csv(self.out_directory + 'final_result_df.csv')
+        # final_result_df = final_result_df[selection]
 
         # Get individual pedestals
         grouped_data_individual = final_result_df.groupby(['layer', 'strip'], group_keys=False)
 
+        print('getting individual pedestals')
         grouped_data_individual.apply(self.__get_individual_pedestals)
 
         # Now we will get the sum of ADC-appropriate pedestals
@@ -396,7 +458,6 @@ class calculatePedestals:
                     print('saving to file')
                     ped_df.to_csv(self.out_directory + '/pedestals_MIP.csv', index=False)
 
-                    del ped_df
 
 
                 else:
@@ -416,9 +477,8 @@ class calculatePedestals:
                         ped_df = pd.DataFrame(self.out_ped_sum)
 
                         # Save our pedestals to a csv file
-                        ped_df.to_csv(self.out_directory + '/pedestals_MIP.csv', index=False)
+                        ped_df.to_csv(self.out_directory + '/pedestals_MIP' +'_run_' + str(self.run_number) + '.csv', index=False)
 
-                        del ped_df
                         del in_data
                         gc.collect()
             else:
@@ -443,7 +503,7 @@ class calculatePedestals:
                 ped_df = pd.DataFrame(self.out_ped_sum)
 
                 # Save our pedestals to a csv file
-                ped_df.to_csv(self.out_directory + '/pedestals_MIP.csv', index=False)
+                ped_df.to_csv(self.out_directory + '/pedestals_MIP' +'_run_' + str(self.run_number) + '.csv', index=False)
 
 
     def __plot_time_trend_no_beam(self, group):
@@ -458,15 +518,30 @@ class calculatePedestals:
 
 
     def __get_individual_pedestals_no_beam(self, group):
+        if len(group) == 0:
+            return
+
         layer, bar, end = group.name
 
         index = group.columns.str.contains('adc')
         data = group.iloc[:, index].to_numpy().flatten()
 
-        self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_' + str(end)] = stats.mode(data)[0]
+        pedestal = stats.mode(data)[0]
+        self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_' + str(end)] = pedestal
+
+        # Identify peak widths
+        # TODO: Note that number of bins are hard coded to 1023. i.e. how high the ADC goes, not very generic!
+        bins = 1023 # max(data) - min(data)
+        hist = np.histogram(data, bins=bins)[0]
+        # Under the assumption that the location in hist of max(hist) = pedestal
+        hist_max = max(hist)
+        peak_width = signal.peak_widths(hist, np.where(hist == hist_max)[0])[0]
+
+        # cut away high and low noise
+        data_cut = data[(data <= pedestal + peak_width * 3) & (data >= pedestal - peak_width * 3)]
 
         # Fit a Gaussian to the pedestals
-        mean, std_dev = stats.norm.fit(data)
+        mean, std_dev = stats.norm.fit(data_cut)
 
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_mean_end_' + str(end)] = mean
         self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_' + str(end)] = std_dev
@@ -480,8 +555,11 @@ class calculatePedestals:
     def __get_sum_pedestal_no_beam(self, group):
         layer, bar, end = group.name
 
-        # Obtain pedestal appropriate for summation of all 8 time samples
-        pedestal_temp0 = 8 * self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_' + str(end)]
+        # number of time samples per pulse
+        matching_columns = [col for col in group.columns if 'adc_end_0' in col]
+        count = len(matching_columns)
+
+        pedestal_temp0 = count * self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_end_' + str(end)]
 
         # Apply pedestal to sum of ADC events
         # note that this is just 0 for now since there is no sum of adc over any single event
@@ -490,11 +568,28 @@ class calculatePedestals:
         group['adc_sum_end' + str(end)] = 8 * group['adc'] - pedestal_temp0
 
         # Select sum pedestal region for plotting
+        # Still unsure why we do this, but for the sake of consistency it's here
         fit_ = (group['adc_sum_end' + str(end)] < 200) & (group['adc_sum_end' + str(end)] > -200)
         fit = group[fit_]
 
+        # Identify peak widths
+        data = fit['adc_sum_end' + str(end)].to_numpy().flatten()
+        # TODO: Note that the bins (and rage) are hard coded to 1023 * 8. i.e. how high the sumADC max goes, not very generic!
+        bins = 1023 * 8 # max(max(data) - min(data), 10)
+        hist = np.histogram(data, bins=bins)[0]
+        # Under the assumption that the location in hist of max(hist) + min(data) = pedestal
+        hist_max_loc = np.where(hist == max(hist))[0]
+        peak_width = signal.peak_widths(hist, hist_max_loc)[0]
+
+        # cut away high and low noise
+        data_cut = data[(data <= hist_max_loc + min(data) + peak_width * 3) & (data >= hist_max_loc + min(data) - peak_width * 3)]
+
+        del data
+
         # Fit a Gaussian to the pedestals
-        mean, std_dev = stats.norm.fit(fit['adc_sum_end' + str(end)])
+        mean, std_dev = stats.norm.fit(data_cut)
+
+        del data_cut
 
         self.out_ped_sum['layer'].append(layer)
         self.out_ped_sum['strip'].append(bar)
@@ -510,8 +605,8 @@ class calculatePedestals:
             self.out_ped_individ['layer_' + str(layer) + '_bar_' + str(bar) + '_std_dev_end_' + str(end)])
 
         # Make plots
-        if self.plot_pedestals:
-            self.__plot_pedestal(group['adc_sum_end' + str(end)], layer, bar, end, mean, std_dev)
+        # if self.plot_pedestals:
+            # self.__plot_pedestal(group['adc_sum_end' + str(end)], layer, bar, end, mean, std_dev)
 
     #TODO: find a solution that works for calculating adc sums
     def __adc_sum_no_beam(self, group):
@@ -525,9 +620,9 @@ class calculatePedestals:
         gc.collect()
 
         # Select likely pedestal events where the TOA and TOT are both zero on each end of the bar
-        selection = (result_df['tot'] == 0) & (result_df['tot'] == 0)
+        # selection = (result_df['tot'] == 0) & (result_df['tot'] == 0)
 
-        result_df = result_df[selection]
+        # result_df = result_df[selection]
 
         grouped_data_raw_id = result_df.groupby(['layer', 'strip', 'end', 'raw_id'])
 
@@ -548,14 +643,12 @@ class calculatePedestals:
 
 
     def get_pedestals_no_beam(self):
-        print('running')
         # Loop through provided ROOT files
         for j in range(len(self.root_file_name)):
 
             if (self.layer_wise):
                 layers = 19
                 if (self.in_batches):
-                    print('in batch wise')
                     for i in range(layers):
                         in_data = pd.DataFrame()
                         with uproot.open(self.root_file_name[j]) as in_file:
@@ -564,7 +657,7 @@ class calculatePedestals:
                             batchnbr = 1
                             for batch in in_file.iterate(
                                     ["layer", "end", "strip", "raw_id", "adc", "tot", "toa", "pf_event", "pf_spill",
-                                     "pf_ticks"], cut, library="pd", step_size="50 MB"):
+                                     "pf_ticks"], cut, library="pd", step_size="10 MB"):
                                 print("batch: ", batchnbr)
                                 in_data = pd.concat([in_data, batch])
                                 batchnbr += 1
@@ -577,9 +670,8 @@ class calculatePedestals:
                         ped_df = pd.DataFrame(self.out_ped_sum)
 
                         # Save our pedestals to a csv file
-                        ped_df.to_csv(self.out_directory + '/pedestals_no_beam.csv', index=False)
+                        ped_df.to_csv(self.out_directory + '/pedestals_no_beam' + '_run_' + str(self.run_number) + '.csv', index=False)
 
-                        del ped_df
                         del in_data
                         gc.collect()
 
@@ -601,9 +693,8 @@ class calculatePedestals:
                         ped_df = pd.DataFrame(self.out_ped_sum)
 
                         # Save our pedestals to a csv file
-                        ped_df.to_csv(self.out_directory + '/pedestals_no_beam.csv', index=False)
+                        ped_df.to_csv(self.out_directory + '/pedestals_no_beam' + '_run_' + str(self.run_number) + '.csv', index=False)
 
-                        del ped_df
                         del in_data
                         gc.collect()
             else:
@@ -627,4 +718,4 @@ class calculatePedestals:
                 # Create our final DataFrame with all pedestals
                 ped_df = pd.DataFrame(self.out_ped_sum)
                 # Save our pedestals to a csv file
-                ped_df.to_csv(self.out_directory + '/pedestals_no_beam.csv', index=False)
+                ped_df.to_csv(self.out_directory + '/pedestals_no_beam' +'_run_' + str(self.run_number) + '.csv', index=False)
