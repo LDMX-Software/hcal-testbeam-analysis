@@ -13,7 +13,7 @@ file = open("scan_DPM0_CALIBRUN_coff14_20220424_220633.csv","r")
 
 dpm = 0
 ilink = 2
-channel = 31
+channel = 32
 
 #TODO Translate to layer-bar-end indexing (using map.csv)
 
@@ -164,6 +164,9 @@ for e in higheventsunfiltered:
 #Make a fit to the low capacitor sumADC values
 linearfitcoeffs = np.polyfit([x.charge for x in lowevents], [x.sumADC for x in lowevents], 1)
 
+print("Linear fit to low. cap charge injections:")
+print(str(linearfitcoeffs[0])+"*x + " +str(linearfitcoeffs[1]))
+
 #Find a constant correction to the charge, based on the first few high cap. events
 
 leadinghighevents = [x for x in highevents if x.calib_dac < 100]
@@ -220,8 +223,15 @@ def func(x,a,b):
 poptpower, pcovpower = curve_fit(func, xval, yval, bounds=([-10000,0],[10000,TOTthreshold-10]))
 x = np.linspace(min(xval),max(xval),100)
 y = [func(p,*poptpower) for p in x]
-print(poptpower)
+#print(poptpower)
 axs[1].plot(x,y, c="red",linestyle="--", label="Fit")
+
+print("popt")
+print(popt)
+print("Poptpower")
+print(poptpower)
+
+print(str(popt[0])+"*x + " + str(popt[1])+" - " + str(poptpower[0])+"/(x-"+str(poptpower[1])+")")
 
 """
 Correct sumADC for TOT events finally!
