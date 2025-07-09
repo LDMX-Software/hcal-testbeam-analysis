@@ -201,3 +201,110 @@ with PdfPages(TOT_ADC_pdf) as pdf:
         except Exception as e:
             print(f"[Skipped] Layer {layer} Strip {strip} End {end}: {e}")
             continue
+# ====== Save calibration parameters to CSV ======
+# The saved parameters allow TOT to be converted into sumADC in two steps:
+# Step 1: Use TOT and the fit parameters to solve for 'charge' from:
+#     TOT = tot_asym_slope * charge + tot_asym_intercept – tot_param_a / (charge – tot_param_b)
+# Step 2: Convert the solved 'charge' into ADC using:
+#     ADC = adc_fit_slope * charge + adc_fit_intercept
+
+import csv
+
+# Define output filename
+csv_save_path = os.path.join(base_dir, "TOT_ADC_Calibration_Parameters_AllChannels.csv")
+
+# Open file for writing
+with open(csv_save_path, 'w', newline='') as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow([
+        'layer', 'strip', 'end',
+        'TOT_threshold',
+        'tot_asym_slope', 'tot_asym_intercept',
+        'tot_param_a', 'tot_param_b',
+        'adc_fit_slope', 'adc_fit_intercept'
+    ])
+
+    # Iterate all channels again (same as main loop), extracting only fit parameters
+    for idx, row in map_df.iterrows():
+        try:
+            layer, strip, end = int(row["PLANE"]), int(row["STRIP"]), int(row["END"])
+            dpm, ilink, channel = int(row["DPM"]), int(row["LINK"]), int(row["CHAN"])
+
+            if dpm == 0:
+                filename = os.path.join(base_dir, r"scan_DPM0_CALIBRUN_coff14_20220424_220633.csv")
+            else:
+                filename = os.path.join(base_dir, r"scan_DPM1_CALIBRUN_coff14_20220424_220543.csv")
+
+            with open(filename, "r") as file:
+                events = []
+                for line in file:
+                    s = line.strip().split(",")
+                    if s[0] == "CALIB_DAC":
+                        continue
+                    if int(s[1]) != dpm or int(s[2]) != ilink or int(s[3]) != channel:
+                        continue
+                    ADC = [int(s[i]) for i in range(5, 13)]
+                    TOT = [int(s[i]) for i in range(13, 21)]
+                    CAPACITOR_TYPE = s[29]
+                    events.append({
+                        "calib_dac": int(s[0]),
+                        "capacitor_type": CAPACITOR_TYPE,
+                        "sumADC": sum(ADC),
+                        "TOT": sum(TOT)
+                    })
+
+            low = [e for e in events if e["capacitor_type"] == "0"]
+            high = [e for e in events if e["capacitor_type"] == "1"]
+
+            def filter_events(evts, tot_threshold=40, adc_threshold=40):
+                result = []
+                for cd in set(e["calib_dac"] for e in evts):
+                    group = [e for e in evts if e["calib_dac"] == cd]
+                    if len(group) < 3:
+                        continue
+                    sadcs = [e["sumADC"] for e in group]
+                    tots = [e["TOT"] for e in group]
+                    if (max(sadcs)-min(sadcs) < adc_threshold and max(tots) == 0) or (max(tots)-min(tots) < tot_threshold):
+                        avg = lambda k: sum(e[k] for e in group) / len(group)
+                        result.append({
+                            "calib_dac": cd,
+                            "sumADC": avg("sumADC"),
+                            "TOT": avg("TOT"),
+                            "capacitor_type": group[0]["capacitor_type"]
+                        })
+                return result
+
+            lowf = filter_events(low)
+            highf = filter_events(high, tot_threshold=20)
+
+            for e in low + lowf:
+                e["charge"] = e["calib_dac"] / 2048 * 500
+            for e in high + highf:
+                e["charge"] = e["calib_dac"] / 2048 * 8000
+
+            linearfit = np.polyfit([x["charge"] for x in lowf], [x["sumADC"] for x in lowf], 1)
+            leadfit = np.polyfit([x["charge"] for x in highf if x["calib_dac"] < 100], [x["sumADC"] for x in highf if x["calib_dac"] < 100], 1)
+
+            a, b = leadfit
+            c, d = linearfit
+            for e in high + highf:
+                e["charge"] = a/c * e["charge"] + (b - d)/c
+
+            TOTthreshold = min([e["charge"] for e in highf if e["TOT"] > 0])
+            xval = [e["charge"] for e in highf if e["charge"] >= TOTthreshold]
+            yval = [e["TOT"] for e in highf if e["charge"] >= TOTthreshold]
+            popt, _ = curve_fit(linear_asymptote, xval[-5:], yval[-5:])
+            poptpower, _ = curve_fit(lambda x, a, b: func(x, a, b, *popt), xval, yval, bounds=([-10000, 0], [10000, TOTthreshold - 10]))
+
+            # Write one row for each channel
+            writer.writerow([
+                layer, strip, end,
+                TOTthreshold,
+                popt[0], popt[1],
+                poptpower[0], poptpower[1],
+                linearfit[0], linearfit[1]
+            ])
+
+        except Exception as e:
+            print(f"[Calibration skipped] Layer {layer} Strip {strip} End {end}: {e}")
+            continue
