@@ -14,7 +14,7 @@ from apply_calibrations import *
 
 # Main class to make analysis files (output is csv format)
 class makeAnalysisFiles:
-    def __init__(self, root_file_name, out_directory='../analysis_files/', calibration_file='../calibrations/toa_calibration_phase3.csv', do_one_bar=False, do_alignment=True, alignment_threshold=20, output_pulse_shapes=False):
+    def __init__(self, root_file_name, run_number, out_directory='../analysis_files/', calibration_file='../calibrations/toa_calibration_phase3.csv', do_one_bar=False, do_alignment=True, alignment_threshold=20, output_pulse_shapes=False, is_simulation = False):
         '''
         Initalization
         @param root_file_name: str or list of str pointing to input ROOT files
@@ -37,23 +37,35 @@ class makeAnalysisFiles:
             self.root_file_name = [root_file_name]
         else:
             self.root_file_name = root_file_name
+        """
         try:
             self.run_number = self.root_file_name[0].split('/')[-1].split('_')[5]
         except:
-            self.run_number = self.root_file_name[0].split('_')[5]
+            try:
+                self.run_number = self.root_file_name[0].split('_')[5]
+            except:
+                self.run_number = 0
+        """
+        self.run_number = str(run_number)
+        """
         self.fpgas = []
+        """
         for i in range(len(self.root_file_name)):
             self.root_file_name[i] = self.root_file_name[i] + ':ntuplizehgcroc/hgcroc'
+            """
             try:
-                self.fpgas.append(self.root_file_name[i].split('/')[-1].split('_')[3])
+                #self.fpgas.append(self.root_file_name[i].split('/')[-1].split('_')[3])
             except:
-                self.fpgas.append(self.root_file_name[i].split('_')[3])
+                #self.fpgas.append(self.root_file_name[i].split('_')[3])
+            """
+        self.fpgas = ["0"] # We never do alignment with this code, just using the reformatter
         self.out_directory = out_directory
         self.do_one_bar = do_one_bar
         self.toa_cal_file = pd.read_csv(calibration_file)
         self.do_alignment = do_alignment
         self.alignment_threshold = alignment_threshold
         self.output_pulse_shapes = output_pulse_shapes
+        self.is_simulation = is_simulation
 
         # Create the directory if it doesn't exist
         if not os.path.exists(self.out_directory):
@@ -150,25 +162,52 @@ class makeAnalysisFiles:
     def __get_each_end(self, data_frame, end, toa_list):
 
         if self.output_pulse_shapes:
-            aggregated_end = data_frame[data_frame['end'] == end].groupby('pf_event').agg({
-                'layer': 'first',
-                'strip': 'first',
-                'pf_spill': 'first',
-                'pf_ticks': 'first',
-                'tot': tot_calib,
-                'toa': lambda x: toa_calib(x,toa_list,end),
-                'adc': ['sum', 'mean', 'max',  
-                    lambda x: x.iloc[0], lambda x: x.iloc[1], lambda x: x.iloc[2], lambda x: x.iloc[3], 
-                    lambda x: x.iloc[4], lambda x: x.iloc[5], lambda x: x.iloc[6], lambda x: x.iloc[7]]
-            }).reset_index()
-            aggregated_end.rename(columns={'adc_<lambda_0>':'adc_0','adc_<lambda_1>':'adc_1','adc_<lambda_2>':'adc_2','adc_<lambda_3>':'adc_3',
-                'adc_<lambda_4>':'adc_4','adc_<lambda_5>':'adc_5','adc_<lambda_6>':'adc_6','adc_<lambda_7>':'adc_7'})
+            if self.is_simulation:
+                aggregated_end = data_frame[data_frame['end'] == end].groupby('pf_event').agg({
+                    'layer': 'first',
+                    'strip': 'first',
+                    'pf_spill': 'first',
+                    'pf_ticks': 'first',
+                    'toa': lambda x: toa_calib(x,toa_list,end),
+                    'adc': ['sum', 'mean', 'max',  
+                        lambda x: x.iloc[0], lambda x: x.iloc[1], lambda x: x.iloc[2], lambda x: x.iloc[3], 
+                        lambda x: x.iloc[4], lambda x: x.iloc[5], lambda x: x.iloc[6], lambda x: x.iloc[7]],
+                    'tot': [lambda x: x.iloc[0], lambda x: x.iloc[1], lambda x: x.iloc[2], lambda x: x.iloc[3], 
+                            lambda x: x.iloc[4], lambda x: x.iloc[5], lambda x: x.iloc[6], lambda x: x.iloc[7]],
+                    'tot_comp': [lambda x: x.iloc[0], lambda x: x.iloc[1], lambda x: x.iloc[2], lambda x: x.iloc[3], 
+                            lambda x: x.iloc[4], lambda x: x.iloc[5], lambda x: x.iloc[6], lambda x: x.iloc[7]],
+                    'tot_prog': [lambda x: x.iloc[0], lambda x: x.iloc[1], lambda x: x.iloc[2], lambda x: x.iloc[3], 
+                            lambda x: x.iloc[4], lambda x: x.iloc[5], lambda x: x.iloc[6], lambda x: x.iloc[7]],
+                    'truth_vpeak': 'first'
+                }).reset_index()
+                aggregated_end.rename(columns={'adc_<lambda_0>':'adc_0','adc_<lambda_1>':'adc_1','adc_<lambda_2>':'adc_2','adc_<lambda_3>':'adc_3',
+                    'adc_<lambda_4>':'adc_4','adc_<lambda_5>':'adc_5','adc_<lambda_6>':'adc_6','adc_<lambda_7>':'adc_7'})
 
-            #aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max', 'adc_first', 'adc_<lambda_0>', 'adc_<lambda_1>']
-            aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max',  
-                    'adc_0', 'adc_1', 'adc_2', 'adc_3', 'adc_4', 'adc_5', 'adc_6', 'adc_7']
+                aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','toa','adc_sum','adc_mean','adc_max',  
+                        'adc_0', 'adc_1', 'adc_2', 'adc_3', 'adc_4', 'adc_5', 'adc_6', 'adc_7', 'tot_0', 'tot_1', 'tot_2', 'tot_3', 'tot_4', 'tot_5', 'tot_6', 'tot_7',
+                        'tot_comp_0', 'tot_comp_1', 'tot_comp_2', 'tot_comp_3', 'tot_comp_4', 'tot_comp_5', 'tot_comp_6', 'tot_comp_7',
+                        'tot_prog_0', 'tot_prog_1', 'tot_prog_2', 'tot_prog_3', 'tot_prog_4', 'tot_prog_5', 'tot_prog_6', 'tot_prog_7',
+                        'truth_vpeak']
 
-            return aggregated_end
+                return aggregated_end
+            else:
+                aggregated_end = data_frame[data_frame['end'] == end].groupby('pf_event').agg({
+                    'layer': 'first',
+                    'strip': 'first',
+                    'pf_spill': 'first',
+                    'pf_ticks': 'first',
+                    'tot': tot_calib,
+                    'toa': lambda x: toa_calib(x,toa_list,end),
+                    'adc': ['sum', 'mean', 'max',  
+                        lambda x: x.iloc[0], lambda x: x.iloc[1], lambda x: x.iloc[2], lambda x: x.iloc[3], 
+                        lambda x: x.iloc[4], lambda x: x.iloc[5], lambda x: x.iloc[6], lambda x: x.iloc[7]]
+                }).reset_index()
+                aggregated_end.rename(columns={'adc_<lambda_0>':'adc_0','adc_<lambda_1>':'adc_1','adc_<lambda_2>':'adc_2','adc_<lambda_3>':'adc_3',
+                    'adc_<lambda_4>':'adc_4','adc_<lambda_5>':'adc_5','adc_<lambda_6>':'adc_6','adc_<lambda_7>':'adc_7'})
+
+                aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max',  
+                        'adc_0', 'adc_1', 'adc_2', 'adc_3', 'adc_4', 'adc_5', 'adc_6', 'adc_7']
+
         else:
             aggregated_end = data_frame[data_frame['end'] == end].groupby('pf_event').agg({
                 'layer': 'first',
@@ -181,7 +220,7 @@ class makeAnalysisFiles:
             }).reset_index()
 
             aggregated_end.columns = ['pf_event','layer','strip','pf_spill','pf_ticks','tot','toa','adc_sum','adc_mean','adc_max']
-            
+
             return aggregated_end
 
 
@@ -208,7 +247,6 @@ class makeAnalysisFiles:
         print('layer: ', layer, ', bar: ', bar)
         toa_cal = (self.toa_cal_file['layer'] == layer - 1) & (self.toa_cal_file['bar'] == bar)
         toa_list = self.toa_cal_file[toa_cal].values.tolist()
-
         try:
             aggregated_end0 = self.__get_each_end(group, 0, toa_list)
             aggregated_end1 = self.__get_each_end(group, 1, toa_list)
@@ -238,7 +276,7 @@ class makeAnalysisFiles:
                         batchnbr = 1
                         for batch in in_file.iterate(
                                 ["layer", "end", "strip", "raw_id", "adc", "tot", "toa", "pf_event", "pf_spill",
-                                 "pf_ticks"],
+                                 "pf_ticks", "tot_comp", "tot_prog", "truth_vpeak"],
                                 cut, library="pd", step_size="10 MB"):
                             print("batch: ", batchnbr)
                             in_data = pd.concat([in_data, batch])
@@ -265,6 +303,7 @@ class makeAnalysisFiles:
                     del loop_result_df
 
                 # Save to csv file
+                print(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[j] + '.csv')
                 result_df.to_csv(self.out_directory + '/run_' + self.run_number + '_fpga_' + self.fpgas[j] + '.csv',
                                  index=False)
 
