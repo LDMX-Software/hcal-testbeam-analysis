@@ -20,8 +20,12 @@ class MCTOTHelper:
     def get_Tc_index(self,row, end):
         Tc_index = -1
         for i in range(0,8):
-            if bool(row["tot_comp_"+str(i)+"_end"+str(end)]):
-                Tc_index = i
+            try:
+                if bool(row["tot_comp_"+str(i)+"_end"+str(end)]):
+                    Tc_index = i
+            except:
+                if bool(row["tot_comp_"+str(i)+"_end"+str(end)][0]):
+                    Tc_index = i
         return Tc_index
     
     def get_TOT(self,row, end):
